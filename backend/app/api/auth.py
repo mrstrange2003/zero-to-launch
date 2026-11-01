@@ -1,18 +1,58 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import jwt
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import settings
-from app.core.security import create_access_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    hash_password,
+    verify_password,
+)
 from app.models.user import User
-from app.schemas.token import Token
+from app.schemas.token import MessageResponse, Token, TokenPayload
 from app.schemas.user import UserCreate, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# The browser only sends the refresh cookie to auth endpoints, never to the rest of the API.
+REFRESH_COOKIE_PATH = "/api/auth"
+
+
+def _set_refresh_cookie(response: Response, user_id: int) -> None:
+    response.set_cookie(
+        key=settings.refresh_cookie_name,
+        value=create_refresh_token(str(user_id)),
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        path=REFRESH_COOKIE_PATH,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    # Attributes must match the ones used when setting, or browsers keep the cookie.
+    response.delete_cookie(
+        key=settings.refresh_cookie_name,
+        path=REFRESH_COOKIE_PATH,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+    )
+
+
+def _access_token_response(user_id: int) -> Token:
+    return Token(
+        access_token=create_access_token(str(user_id)),
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -36,8 +76,16 @@ def register(user_in: UserCreate, db: DbSession) -> UserResponse:
 
 
 @router.post("/login", response_model=Token)
-def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: DbSession) -> Token:
-    """OAuth2 password flow: send `username` (the email) and `password` as form data."""
+def login(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    db: DbSession,
+    response: Response,
+) -> Token:
+    """OAuth2 password flow: send `username` (the email) and `password` as form data.
+
+    Returns a short-lived access token in the body and sets a long-lived refresh token
+    as an HttpOnly cookie.
+    """
     user = db.scalar(select(User).where(User.email == form_data.username.lower()))
     if user is None or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
@@ -48,10 +96,49 @@ def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: DbSess
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user")
 
-    return Token(
-        access_token=create_access_token(str(user.id)),
-        expires_in=settings.access_token_expire_minutes * 60,
+    _set_refresh_cookie(response, user.id)
+    return _access_token_response(user.id)
+
+
+@router.post("/refresh", response_model=Token)
+def refresh(
+    db: DbSession,
+    response: Response,
+    refresh_token: Annotated[str | None, Cookie(alias=settings.refresh_cookie_name)] = None,
+) -> Token:
+    """Exchange the HttpOnly refresh cookie for a new access token (and a rotated cookie)."""
+    if not refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    try:
+        payload = TokenPayload.model_validate(decode_refresh_token(refresh_token))
+        user_id = int(payload.sub)
+    except (jwt.PyJWTError, ValueError):
+        user_id = None
+
+    user = db.get(User, user_id) if user_id is not None else None
+    if user is None or not user.is_active:
+        raise _session_expired_error()
+
+    _set_refresh_cookie(response, user.id)
+    return _access_token_response(user.id)
+
+
+def _session_expired_error() -> HTTPException:
+    # Raising discards the injected `response`, so the cookie-clearing header goes on the exception.
+    scratch = Response()
+    _clear_refresh_cookie(scratch)
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Session expired",
+        headers={"set-cookie": scratch.headers["set-cookie"]},
     )
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(response: Response) -> MessageResponse:
+    _clear_refresh_cookie(response)
+    return MessageResponse(message="Logged out")
 
 
 @router.get("/me", response_model=UserResponse)

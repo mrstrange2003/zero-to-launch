@@ -54,10 +54,12 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-uvicorn app.main:app --reload --env-file ../.env
+alembic upgrade head               # create/upgrade the database schema
+uvicorn app.main:app --reload
 ```
 
-The API is now on <http://localhost:8000>. Tables are created automatically on startup.
+The API is now on <http://localhost:8000>. The app and Alembic both load the project-root `.env`
+automatically (real environment variables take precedence).
 
 Run the tests:
 
@@ -84,12 +86,13 @@ Set `VITE_API_URL` if the API is not at `http://localhost:8000`.
 flowchart LR
     subgraph Browser
         UI["React SPA<br/>(Vite + Tailwind)"]
-        Mem[("JWT in memory<br/>(never in storage)")]
+        Mem[("Access token<br/>in memory only")]
+        Jar[("Refresh token<br/>HttpOnly cookie")]
         UI <--> Mem
     end
 
     subgraph Backend["FastAPI (uvicorn :8000)"]
-        R["api/auth.py<br/>/register /login /me"]
+        R["api/auth.py<br/>/register /login /refresh<br/>/logout /me"]
         D["api/deps.py<br/>get_db · get_current_user"]
         S["core/security.py<br/>bcrypt · PyJWT"]
         M["models + schemas<br/>SQLAlchemy · Pydantic"]
@@ -98,9 +101,12 @@ flowchart LR
     end
 
     DB[("SQLite<br/>or PostgreSQL")]
+    A["Alembic<br/>migrations"]
 
-    UI -- "Axios + Bearer token<br/>(CORS: localhost)" --> R
+    UI -- "Axios + Bearer token<br/>(CORS: localhost, credentials)" --> R
+    Jar -. "sent only to /api/auth/*" .-> R
     M --> DB
+    A -- "alembic upgrade head" --> DB
 ```
 
 ### Request flow
@@ -108,18 +114,36 @@ flowchart LR
 1. **Register:** the React form validates input, then sends `POST /api/auth/register` (JSON).
    The backend hashes the password with bcrypt and returns a `UserResponse`. A duplicate email returns **409**.
 2. **Login:** sends `POST /api/auth/login` with `URLSearchParams` (`username`, `password`), the OAuth2 password form.
-   The backend returns a `Token` (signed HS256 JWT plus `expires_in`).
-3. **Authenticated calls:** an Axios interceptor adds `Authorization: Bearer <token>`.
-   `get_current_user` decodes the JWT and loads the user. A **401** clears the client session.
+   The backend returns a 15-minute **access token** in JSON and sets a 7-day **refresh token** cookie.
+3. **Authenticated calls:** an Axios interceptor adds `Authorization: Bearer <access token>`.
+   `get_current_user` decodes the JWT and loads the user.
+4. **Silent refresh:** if any call returns **401**, the interceptor calls `POST /api/auth/refresh`
+   once, even when several requests fail together. It stores the new access token and retries the
+   original request. If the refresh itself fails, the session is cleared and protected routes redirect to `/login`.
+5. **Page load:** `AuthContext` calls `/api/auth/refresh` before rendering, so a reload or a new tab
+   restores the session without asking for the password.
+6. **Logout:** `POST /api/auth/logout` clears the cookie on the server response, and the in-memory token is dropped.
 
-### Frontend auth model
+### Token and session model
 
-- The JWT lives **only in memory**: a module variable in `src/lib/axios.js`, mirrored in
-  React state by `AuthContext`. It is never written to `localStorage`, `sessionStorage`, or
-  cookies, so injected scripts cannot read it from storage.
-- Consequence: **refreshing the page signs you out.** This is intentional. Adding a refresh-token
-  flow with an HttpOnly cookie is the standard next step if you need persistent sessions.
-- The session also ends automatically when the token's `expires_in` elapses.
+| Token   | Lifetime | Where it lives                                   | Readable by JS? |
+| ------- | -------- | ------------------------------------------------ | --------------- |
+| Access  | 15 min   | JS module memory (`src/lib/axios.js`)            | Yes, but never persisted |
+| Refresh | 7 days   | Cookie: `HttpOnly; Secure; SameSite=Lax; Path=/api/auth` | **No**          |
+
+- **XSS:** injected scripts cannot read the refresh token, and the access token is never stored
+  anywhere persistent.
+- **CSRF:** `SameSite=Lax` stops cross-site POSTs from carrying the cookie, and CORS only allows localhost
+  or the origins in `CORS_ORIGINS`. `/refresh` returns a token in the response body, which other
+  origins cannot read.
+- **Rotation:** every successful `/refresh` issues a fresh refresh cookie, so an active user stays signed in indefinitely.
+  A user who is idle for 7 days must log in again.
+- **Limitation:** refresh tokens are stateless JWTs. Logout deletes the browser's cookie, but a
+  refresh token that was already stolen stays valid until it expires. If you need server-side revocation
+  ("log out everywhere"), store each token's `jti` in a table and check it in `/refresh`.
+- **Same-site requirement:** the SPA and API must be on the same site for the cookie to be sent,
+  for example `localhost:5173` with `localhost:8000`. Mixing `localhost` and `127.0.0.1` will not work.
+  In production, serve both under one domain (e.g. `app.example.com` + `api.example.com`).
 
 ### Directory structure
 
@@ -129,23 +153,27 @@ flowchart LR
 ├── docker-compose.yml              # backend, frontend, optional `db` (postgres profile)
 ├── .env.example                    # copy to .env (never commit .env)
 ├── backend/
-│   ├── Dockerfile
+│   ├── Dockerfile                  # runs `alembic upgrade head` before uvicorn
 │   ├── requirements.txt            # runtime deps
 │   ├── requirements-dev.txt        # + pytest, httpx2
+│   ├── alembic.ini                 # Alembic config (no DB URL; see env.py)
+│   ├── alembic/
+│   │   ├── env.py                  # uses Base.metadata + DATABASE_URL from app.core.config
+│   │   └── versions/               # migration scripts
 │   ├── app/
-│   │   ├── main.py                 # FastAPI app, CORS, routers, lifespan (create tables)
+│   │   ├── main.py                 # FastAPI app, CORS, routers
 │   │   ├── api/
-│   │   │   ├── auth.py             # /register, /login, /me
+│   │   │   ├── auth.py             # /register, /login, /refresh, /logout, /me
 │   │   │   └── deps.py             # DB session + current-user dependencies
 │   │   ├── core/
-│   │   │   ├── config.py           # env-driven settings
-│   │   │   └── security.py         # bcrypt hashing, JWT encode/decode
+│   │   │   ├── config.py           # env-driven settings (+ loads .env)
+│   │   │   └── security.py         # bcrypt hashing, access/refresh JWTs
 │   │   ├── db/
 │   │   │   ├── base.py             # DeclarativeBase
 │   │   │   └── session.py          # engine (SQLite/Postgres), SessionLocal, get_db
 │   │   ├── models/user.py          # User ORM model
 │   │   └── schemas/                # UserCreate, UserResponse, Token
-│   └── tests/                      # pytest suite (auth, JWT, CORS)
+│   └── tests/                      # pytest: auth, refresh/logout cookies, CORS, migrations
 └── frontend/
     ├── Dockerfile                  # node build stage -> nginx runtime
     ├── nginx.conf                  # SPA fallback routing
@@ -154,10 +182,10 @@ flowchart LR
     └── src/
         ├── App.jsx                 # routes
         ├── lib/
-        │   ├── axios.js            # API client, in-memory token, interceptors
+        │   ├── axios.js            # API client, in-memory token, silent refresh + retry
         │   ├── apiError.js         # FastAPI error -> readable message
         │   └── validation.js       # client-side form rules
-        ├── context/AuthContext.jsx # login / register / logout / fetchCurrentUser
+        ├── context/AuthContext.jsx # session restore on load, login / register / logout
         ├── components/
         │   ├── ui/                 # Button, Input, Modal, Alert (+ index.js barrel)
         │   ├── ProtectedRoute.jsx  # redirects to /login without a token
@@ -231,22 +259,57 @@ The backend only reads `DATABASE_URL`, so switching databases is a configuration
    `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` in `.env`.
 
 3. **Start it.**
-   - Docker: `docker compose --profile postgres up --build` (starts the `db` service; the backend waits for it to be healthy).
-   - Manual: `pip install -r requirements.txt`, then restart uvicorn.
+   - Docker: `docker compose --profile postgres up --build`. This starts the `db` service; the backend waits
+     for it to be healthy, then runs `alembic upgrade head` automatically.
+   - Manual: `pip install -r requirements.txt`, then `alembic upgrade head`, then restart uvicorn.
 
-Tables are created on startup via `Base.metadata.create_all`. Existing SQLite data is **not**
-migrated. For schema changes in a real project, add [Alembic](https://alembic.sqlalchemy.org/).
+The same migration files run on SQLite and Postgres. Existing SQLite *data* is **not** copied over.
 
 ---
 
-## 6. API reference
+## 6. Database migrations (Alembic)
+
+The schema is owned by Alembic; the app never creates tables itself. Run commands from `backend/`:
+
+```bash
+alembic upgrade head                                  # apply all pending migrations
+alembic revision --autogenerate -m "add posts table"  # after editing/adding models
+alembic downgrade -1                                  # roll back the last migration
+alembic current                                       # show the DB's revision
+alembic upgrade head --sql                            # print SQL without running it
+```
+
+Workflow for a schema change:
+
+1. Add or edit a model in `app/models/`. New model modules must be imported in `app/models/__init__.py`.
+2. Run `alembic revision --autogenerate -m "describe change"` and **review** the generated file in `alembic/versions/`.
+3. Run `alembic upgrade head`, then commit the model and the migration together.
+
+`alembic/env.py` reads `DATABASE_URL` through `app.core.config`, which loads `.env`, so Alembic and the
+app always target the same database. SQLite uses batch mode so `ALTER` operations work.
+The test suite builds its database from the migrations, and `tests/test_migrations.py` fails if
+models and migrations drift apart.
+
+**Database created before Alembic was added?** If you ran an earlier version of this template, your
+database already has a `users` table but no migration history. Mark it as current once, instead of upgrading:
+
+```bash
+alembic stamp head
+# Docker: docker compose run --rm backend alembic stamp head
+```
+
+---
+
+## 7. API reference
 
 All routes are prefixed with `/api` and return typed Pydantic models.
 
-| Method | Path                 | Body                                    | Returns          |
+| Method | Path                 | Input                                   | Returns          |
 | ------ | -------------------- | --------------------------------------- | ---------------- |
 | POST   | `/api/auth/register` | JSON `{ email, password, full_name? }`  | `UserResponse` (201) |
-| POST   | `/api/auth/login`    | Form `username` (email), `password`     | `Token`          |
+| POST   | `/api/auth/login`    | Form `username` (email), `password`     | `Token` + sets refresh cookie |
+| POST   | `/api/auth/refresh`  | Refresh cookie                          | `Token` + rotates cookie (401 if missing/invalid) |
+| POST   | `/api/auth/logout`   | none                                    | `MessageResponse` + clears cookie |
 | GET    | `/api/auth/me`       | Header `Authorization: Bearer <token>`  | `UserResponse`   |
 | GET    | `/api/health`        | none                                    | `HealthResponse` |
 
@@ -254,13 +317,15 @@ All routes are prefixed with `/api` and return typed Pydantic models.
 curl -X POST localhost:8000/api/auth/register -H "Content-Type: application/json" \
   -d '{"email":"me@example.com","password":"supersecret"}'
 
-curl -X POST localhost:8000/api/auth/login \
+# -c/-b keep the refresh cookie between calls (use COOKIE_SECURE=false for plain-http curl)
+curl -c jar.txt -X POST localhost:8000/api/auth/login \
   -d "username=me@example.com&password=supersecret"
+curl -b jar.txt -c jar.txt -X POST localhost:8000/api/auth/refresh
 ```
 
 ---
 
-## 7. Configuration
+## 8. Configuration
 
 All settings come from environment variables (see `.env.example`).
 
@@ -269,7 +334,10 @@ All settings come from environment variables (see `.env.example`).
 | `SECRET_KEY`                  | dev-only placeholder        | JWT signing key                           |
 | `ENVIRONMENT`                 | `development`               | `production` enforces a real `SECRET_KEY` |
 | `JWT_ALGORITHM`               | `HS256`                     | JWT algorithm                             |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60`                        | Token lifetime                            |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15`                        | Access token lifetime                     |
+| `REFRESH_TOKEN_EXPIRE_DAYS`   | `7`                         | Refresh cookie lifetime                   |
+| `COOKIE_SECURE`               | `true`                      | `Secure` flag on the refresh cookie (must be true in production; false only for Safari on http://localhost) |
+| `REFRESH_COOKIE_NAME`         | `refresh_token`             | Cookie name                               |
 | `DATABASE_URL`                | `sqlite:///./data/app.db`   | SQLAlchemy URL (SQLite or Postgres)       |
 | `CORS_ORIGINS`                | empty                       | Extra comma-separated allowed origins     |
 | `VITE_API_URL`                | `http://localhost:8000`     | API URL used by the frontend              |
@@ -279,7 +347,7 @@ CORS always allows `http(s)://localhost:<any port>` and `127.0.0.1`.
 
 ---
 
-## 8. What is never committed
+## 9. What is never committed
 
 `.gitignore` files at the root, in `backend/`, and in `frontend/` exclude:
 

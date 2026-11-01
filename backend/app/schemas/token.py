@@ -13,4 +13,9 @@ class TokenPayload(BaseModel):
     sub: str
     exp: int
     iat: int
-    type: Literal["access"]
+    type: Literal["access", "refresh"]
+    jti: str | None = None
+
+
+class MessageResponse(BaseModel):
+    message: str

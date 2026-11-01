@@ -1,27 +1,27 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import api, { setAccessToken, setUnauthorizedHandler } from '../lib/axios'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { Loader2 } from 'lucide-react'
+import api, { refreshAccessToken, setAccessToken, setAuthHandlers } from '../lib/axios'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(null)
   const [user, setUser] = useState(null)
-  const expiryTimer = useRef(null)
+  const [initializing, setInitializing] = useState(true)
 
-  const logout = useCallback(() => {
-    clearTimeout(expiryTimer.current)
+  const clearSession = useCallback(() => {
     setAccessToken(null)
     setToken(null)
     setUser(null)
   }, [])
 
   useEffect(() => {
-    setUnauthorizedHandler(logout)
-    return () => {
-      setUnauthorizedHandler(null)
-      clearTimeout(expiryTimer.current)
-    }
-  }, [logout])
+    setAuthHandlers({
+      onTokenRefreshed: (data) => setToken(data.access_token),
+      onSessionExpired: clearSession,
+    })
+    return () => setAuthHandlers({ onTokenRefreshed: null, onSessionExpired: null })
+  }, [clearSession])
 
   const fetchCurrentUser = useCallback(async () => {
     const { data } = await api.get('/api/auth/me')
@@ -29,35 +29,64 @@ export function AuthProvider({ children }) {
     return data
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+
+    async function restoreSession() {
+      try {
+        await refreshAccessToken()
+        const { data } = await api.get('/api/auth/me')
+        if (!cancelled) setUser(data)
+      } catch {
+        if (!cancelled) clearSession()
+      } finally {
+        if (!cancelled) setInitializing(false)
+      }
+    }
+
+    restoreSession()
+    return () => {
+      cancelled = true
+    }
+  }, [clearSession])
+
   const login = useCallback(
     async (email, password) => {
       const body = new URLSearchParams({ username: email, password })
-      const { data } = await api.post('/api/auth/login', body)
+      const { data } = await api.post('/api/auth/login', body, { skipAuthRefresh: true })
 
       // Set the module-level token first so the /me request below is authenticated.
       setAccessToken(data.access_token)
       try {
         const currentUser = await fetchCurrentUser()
         setToken(data.access_token)
-        clearTimeout(expiryTimer.current)
-        expiryTimer.current = setTimeout(logout, data.expires_in * 1000)
         return currentUser
       } catch (error) {
-        logout()
+        clearSession()
         throw error
       }
     },
-    [fetchCurrentUser, logout],
+    [fetchCurrentUser, clearSession],
   )
 
   const register = useCallback(async ({ email, password, fullName }) => {
-    const { data } = await api.post('/api/auth/register', {
-      email,
-      password,
-      full_name: fullName || null,
-    })
+    const { data } = await api.post(
+      '/api/auth/register',
+      { email, password, full_name: fullName || null },
+      { skipAuthRefresh: true },
+    )
     return data
   }, [])
+
+  const logout = useCallback(async () => {
+    try {
+      await api.post('/api/auth/logout', null, { skipAuthRefresh: true })
+    } catch {
+      // The local session is cleared regardless; an unreachable server must not trap the user.
+    } finally {
+      clearSession()
+    }
+  }, [clearSession])
 
   const value = useMemo(
     () => ({
@@ -71,6 +100,15 @@ export function AuthProvider({ children }) {
     }),
     [token, user, login, register, logout, fetchCurrentUser],
   )
+
+  if (initializing) {
+    return (
+      <div className="flex min-h-screen items-center justify-center" role="status" aria-live="polite">
+        <Loader2 className="size-6 animate-spin text-brand-600" aria-hidden="true" />
+        <span className="sr-only">Restoring session…</span>
+      </div>
+    )
+  }
 
   return <AuthContext value={value}>{children}</AuthContext>
 }

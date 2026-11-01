@@ -1,0 +1,9 @@
+Alembic migrations. Run all commands from the backend/ directory.
+
+  alembic upgrade head                                  # apply all migrations
+  alembic revision --autogenerate -m "add posts table"  # after changing models
+  alembic downgrade -1                                  # roll back one revision
+  alembic stamp head                                    # mark an existing DB as up to date
+
+DATABASE_URL comes from app.core.config (environment / project .env), never alembic.ini.
+New models must be imported in app/models/__init__.py so autogenerate can see them.

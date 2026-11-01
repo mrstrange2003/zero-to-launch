@@ -13,7 +13,10 @@ Always use FastAPI, SQLAlchemy, and PyJWT for backend. Use Vite, React, Tailwind
 - Use `bcrypt` directly for password hashing (not `passlib`) and `PyJWT` (`import jwt`) for tokens (not `python-jose`).
 - Use timezone-aware datetimes (`datetime.now(timezone.utc)`), never `datetime.utcnow()`.
 - Use FastAPI `lifespan` handlers, not `@app.on_event`.
+- Schema changes go through Alembic (`alembic revision --autogenerate`); never call `Base.metadata.create_all` in app code. New models must be imported in `app/models/__init__.py`.
+- Access tokens (15 min) are returned in JSON; refresh tokens (7 days) live only in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie scoped to `/api/auth`.
 
 ## Frontend specifics
-- Keep the access token in memory (React state/context); do not persist JWTs in `localStorage`.
-- Attach tokens via a single Axios instance interceptor; clear auth state on 401 responses.
+- Keep the access token in memory (module variable + React state); never persist JWTs in `localStorage`, `sessionStorage`, or JS-readable cookies.
+- Use the shared Axios instance from `src/lib/axios.js` (`withCredentials: true`). Its interceptor attaches the token, silently refreshes on 401, and retries once.
+- Pass `{ skipAuthRefresh: true }` for requests where a 401 is an expected answer (login, register, refresh, logout).
