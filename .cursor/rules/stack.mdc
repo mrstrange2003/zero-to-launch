@@ -1,0 +1,19 @@
+---
+description: Tech stack and coding standards for the Zero-to-Launch boilerplate
+alwaysApply: true
+---
+
+# Stack Rules
+
+Always use FastAPI, SQLAlchemy, and PyJWT for backend. Use Vite, React, Tailwind CSS, and Axios for frontend. All backend routes must return strictly typed Pydantic models. Frontend must handle JWTs securely. Never use deprecated libraries.
+
+## Backend specifics
+- Every route declares `response_model=` (or a typed return annotation) using a Pydantic v2 model; never return raw dicts or ORM objects without a schema.
+- Use SQLAlchemy 2.0 style (`DeclarativeBase`, `Mapped`, `mapped_column`, `select()`); not the legacy `Query` API.
+- Use `bcrypt` directly for password hashing (not `passlib`) and `PyJWT` (`import jwt`) for tokens (not `python-jose`).
+- Use timezone-aware datetimes (`datetime.now(timezone.utc)`), never `datetime.utcnow()`.
+- Use FastAPI `lifespan` handlers, not `@app.on_event`.
+
+## Frontend specifics
+- Keep the access token in memory (React state/context); do not persist JWTs in `localStorage`.
+- Attach tokens via a single Axios instance interceptor; clear auth state on 401 responses.
