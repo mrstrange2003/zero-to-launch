@@ -82,6 +82,19 @@ export function AuthProvider({ children }) {
     return data
   }, [])
 
+  const updateProfile = useCallback(async (changes) => {
+    const { data } = await api.put('/api/auth/me', changes)
+    setUser(data)
+    return data
+  }, [])
+
+  const changePassword = useCallback(async ({ currentPassword, newPassword }) => {
+    await api.post('/api/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    })
+  }, [])
+
   const logout = useCallback(async () => {
     try {
       await api.post('/api/auth/logout', null, { skipAuthRefresh: true })
@@ -101,8 +114,10 @@ export function AuthProvider({ children }) {
       register,
       logout,
       fetchCurrentUser,
+      updateProfile,
+      changePassword,
     }),
-    [token, user, login, register, logout, fetchCurrentUser],
+    [token, user, login, register, logout, fetchCurrentUser, updateProfile, changePassword],
   )
 
   if (initializing) {

@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import Preview from './pages/Preview'
 import Register from './pages/Register'
+import Settings from './pages/Settings'
 
 function ThemedToaster() {
   const { resolvedTheme } = useTheme()
@@ -28,6 +29,7 @@ export default function App() {
               <Route path="/preview" element={<Preview />} />
               <Route element={<ProtectedRoute />}>
                 <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/settings" element={<Settings />} />
               </Route>
             </Route>
 

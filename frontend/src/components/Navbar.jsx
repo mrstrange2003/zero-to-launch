@@ -1,6 +1,7 @@
 import { LogIn, LogOut, Menu, UserCircle2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import ConnectionStatus from './ConnectionStatus'
 import ThemeToggle from './ThemeToggle'
 import { Button } from './ui'
 
@@ -21,6 +22,7 @@ export default function Navbar({ onOpenSidebar }) {
         <span className="font-semibold text-slate-900 lg:hidden dark:text-white">Zero-to-Launch</span>
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          {isAuthenticated && <ConnectionStatus />}
           <ThemeToggle />
           {isAuthenticated ? (
             <>

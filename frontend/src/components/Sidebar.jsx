@@ -1,10 +1,11 @@
-import { LayoutDashboard, LayoutGrid, Rocket, X } from 'lucide-react'
+import { LayoutDashboard, LayoutGrid, Rocket, Settings, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 
 const NAV_ITEMS = [
   { to: '/dashboard', label: 'Dashboard', Icon: LayoutDashboard },
   { to: '/preview', label: 'Components', Icon: LayoutGrid },
+  { to: '/settings', label: 'Settings', Icon: Settings },
 ]
 
 function Brand() {

@@ -92,11 +92,15 @@ flowchart LR
     end
 
     subgraph Backend["FastAPI (uvicorn :8000)"]
-        R["api/auth.py<br/>/register /login /refresh<br/>/logout /me"]
-        D["api/deps.py<br/>get_db · get_current_user"]
+        R["api/auth.py<br/>/register /login /refresh<br/>/logout /me /change-password"]
+        AD["api/admin.py<br/>require_role(admin)"]
+        W["api/ws.py<br/>/api/ws"]
+        D["api/deps.py<br/>get_db · get_current_user<br/>require_role"]
         S["core/security.py<br/>bcrypt · PyJWT"]
         M["models + schemas<br/>SQLAlchemy · Pydantic"]
         R --> D --> S
+        AD --> D
+        W --> D
         R --> M
     end
 
@@ -104,6 +108,7 @@ flowchart LR
     A["Alembic<br/>migrations"]
 
     UI -- "Axios + Bearer token<br/>(CORS: localhost, credentials)" --> R
+    UI -- "useWebSocket<br/>(token in first message)" --> W
     Jar -. "sent only to /api/auth/*" .-> R
     M --> DB
     A -- "alembic upgrade head" --> DB
@@ -145,6 +150,65 @@ flowchart LR
   for example `localhost:5173` with `localhost:8000`. Mixing `localhost` and `127.0.0.1` will not work.
   In production, serve both under one domain (e.g. `app.example.com` + `api.example.com`).
 
+### Roles (RBAC)
+
+Every user has a `role` column (`"user"` by default, `Role` enum in `app/models/user.py`).
+`GET /api/auth/me` returns it, and `PUT /api/auth/me` rejects any attempt to set it (`422`).
+Guard routes with `require_role` from `app/api/deps.py`:
+
+```python
+from app.api.deps import AdminUser, require_role
+from app.models.user import Role
+
+# Whole router: every route needs admin (see app/api/admin.py)
+router = APIRouter(prefix="/admin", dependencies=[Depends(require_role(Role.ADMIN))])
+
+# Single route, with the user injected
+@router.delete("/posts/{post_id}")
+def delete_post(post_id: int, admin: AdminUser): ...
+
+# Any of several roles
+@router.get("/reports")
+def reports(user: Annotated[User, Depends(require_role("moderator", Role.ADMIN))]): ...
+```
+
+Unauthenticated requests get `401`; authenticated users without the role get `403`.
+Promote a user from the command line (from `backend/`):
+
+```bash
+python -m app.cli set-role you@example.com admin
+# Docker: docker compose exec backend python -m app.cli set-role you@example.com admin
+```
+
+### Realtime (WebSockets)
+
+`/api/ws` (in `app/api/ws.py`) speaks JSON messages typed in `app/schemas/ws.py`:
+
+| Direction | Message | Meaning |
+| --------- | ------- | ------- |
+| client → server | `{"type":"auth","token":"<access token>"}` | Must be the first message, within 10 s |
+| server → client | `{"type":"connected","user":{id,email,role}}` | Authenticated |
+| client → server | `{"type":"ping"}` | Server answers `{"type":"pong","server_time":...}` |
+| client → server | `{"type":"echo","data":...}` | Server echoes `data` back |
+| server → client | `{"type":"error","detail":...}` | Malformed message (connection stays open) |
+
+A missing, invalid, or expired token closes the socket with code **4401**. The token goes in a
+message, not in `?token=` in the URL, because servers and proxies write URLs to their access logs.
+
+On the frontend, `useWebSocket()` (`src/lib/useWebSocket.js`) manages the connection. It sends the
+in-memory access token and pings every 25 s. Dropped connections are retried with exponential
+backoff (1 s up to 30 s, with jitter), and the hook reconnects immediately when the browser comes
+back online. A `4401` close triggers one token refresh before reconnecting. The Navbar dot shows
+the status: green means live, amber means connecting, red means offline.
+
+```jsx
+const { status, lastMessage, send } = useWebSocket({ onMessage: (msg) => console.log(msg) })
+send({ type: 'echo', data: 'hello' })
+```
+
+The socket stays open after the access token it authenticated with expires. If an action needs fresh
+authorization, check it per message.
+
 ### Directory structure
 
 ```
@@ -162,18 +226,21 @@ flowchart LR
 │   │   └── versions/               # migration scripts
 │   ├── app/
 │   │   ├── main.py                 # FastAPI app, CORS, routers
+│   │   ├── cli.py                  # `python -m app.cli set-role <email> <role>`
 │   │   ├── api/
-│   │   │   ├── auth.py             # /register, /login, /refresh, /logout, /me
-│   │   │   └── deps.py             # DB session + current-user dependencies
+│   │   │   ├── auth.py             # /register, /login, /refresh, /logout, /me, /change-password
+│   │   │   ├── admin.py            # example admin-only router (require_role)
+│   │   │   ├── ws.py               # authenticated WebSocket endpoint /api/ws
+│   │   │   └── deps.py             # DB session, current user, require_role
 │   │   ├── core/
 │   │   │   ├── config.py           # env-driven settings (+ loads .env)
 │   │   │   └── security.py         # bcrypt hashing, access/refresh JWTs
 │   │   ├── db/
 │   │   │   ├── base.py             # DeclarativeBase
 │   │   │   └── session.py          # engine (SQLite/Postgres), SessionLocal, get_db
-│   │   ├── models/user.py          # User ORM model
-│   │   └── schemas/                # UserCreate, UserResponse, Token
-│   └── tests/                      # pytest: auth, refresh/logout cookies, CORS, migrations
+│   │   ├── models/user.py          # User ORM model + Role enum
+│   │   └── schemas/                # user, token, and WebSocket message models
+│   └── tests/                      # pytest: auth, cookies, CORS, profile, RBAC, WebSocket, migrations
 └── frontend/
     ├── Dockerfile                  # node build stage -> nginx runtime
     ├── nginx.conf                  # SPA fallback routing
@@ -185,19 +252,21 @@ flowchart LR
         │   ├── axios.js            # API client, in-memory token, silent refresh + retry
         │   ├── apiError.js         # FastAPI error -> readable message
         │   ├── validation.js       # client-side form rules
-        │   └── theme.js            # theme storage + <html> class helpers
+        │   ├── theme.js            # theme storage + <html> class helpers
+        │   └── useWebSocket.js     # authenticated socket with auto-reconnect
         ├── context/
-        │   ├── AuthContext.jsx     # session restore on load, login / register / logout
+        │   ├── AuthContext.jsx     # session restore, login / register / logout, profile + password
         │   └── ThemeContext.jsx    # light / dark / system, persisted in localStorage
         ├── components/
         │   ├── ui/                 # Button, Input, Modal, Alert (+ index.js barrel)
         │   ├── AppLayout.jsx       # Sidebar + Navbar + <main><Outlet/></main>
         │   ├── Sidebar.jsx         # fixed column on desktop, slide-over drawer on mobile
-        │   ├── Navbar.jsx          # hamburger, theme toggle, user + logout
+        │   ├── Navbar.jsx          # hamburger, live status, theme toggle, user + logout
+        │   ├── ConnectionStatus.jsx # WebSocket status dot
         │   ├── ThemeToggle.jsx     # Sun/Moon menu: Light, Dark, System
         │   ├── ProtectedRoute.jsx  # redirects to /login without a token
         │   └── AuthLayout.jsx      # centered card for login/register
-        └── pages/                  # Login, Register, Dashboard, Preview
+        └── pages/                  # Login, Register, Dashboard, Settings, Preview
 ```
 
 ### Routes
@@ -207,6 +276,7 @@ flowchart LR
 | `/login`      | public    | Sign in                                     |
 | `/register`   | public    | Create account (auto-signs in on success)   |
 | `/dashboard`  | protected | User info, inside `AppLayout`               |
+| `/settings`   | protected | Update profile (name, email) and change password |
 | `/preview`    | public    | UI component gallery, inside `AppLayout` (`/components` aliases here; shows "Sign in" when logged out) |
 
 `AppLayout` is a layout route: put new pages under it in `App.jsx`, wrap protected ones in
@@ -323,6 +393,9 @@ Workflow for a schema change:
 2. Run `alembic revision --autogenerate -m "describe change"` and **review** the generated file in `alembic/versions/`.
 3. Run `alembic upgrade head`, then commit the model and the migration together.
 
+After pulling changes that include new migrations (e.g. the `role` column), run `alembic upgrade head`
+before starting the server. Otherwise queries fail with "no such column".
+
 `alembic/env.py` reads `DATABASE_URL` through `app.core.config`, which loads `.env`, so Alembic and the
 app always target the same database. SQLite uses batch mode so `ALTER` operations work.
 The test suite builds its database from the migrations, and `tests/test_migrations.py` fails if
@@ -348,7 +421,11 @@ All routes are prefixed with `/api` and return typed Pydantic models.
 | POST   | `/api/auth/login`    | Form `username` (email), `password`     | `Token` + sets refresh cookie |
 | POST   | `/api/auth/refresh`  | Refresh cookie                          | `Token` + rotates cookie (401 if missing/invalid) |
 | POST   | `/api/auth/logout`   | none                                    | `MessageResponse` + clears cookie |
-| GET    | `/api/auth/me`       | Header `Authorization: Bearer <token>`  | `UserResponse`   |
+| GET    | `/api/auth/me`       | Header `Authorization: Bearer <token>`  | `UserResponse` (includes `role`) |
+| PUT    | `/api/auth/me`       | Bearer + JSON `{ full_name?, email? }` (partial; other fields → 422) | `UserResponse` (409 if email taken) |
+| POST   | `/api/auth/change-password` | Bearer + JSON `{ current_password, new_password }` | `MessageResponse` (400 if current password is wrong) |
+| GET    | `/api/admin/users`   | Bearer, **admin role**                  | `list[UserResponse]` (403 for non-admins) |
+| WS     | `/api/ws`            | First message `{ type: "auth", token }` | See [Realtime](#realtime-websockets) |
 | GET    | `/api/health`        | none                                    | `HealthResponse` |
 
 ```bash

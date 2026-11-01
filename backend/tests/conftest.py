@@ -45,3 +45,17 @@ def client():
     with engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(delete(table))
+
+
+def register_and_login(
+    client: TestClient, email: str = "user@example.com", password: str = "correct-horse-battery"
+) -> str:
+    """Creates a user and returns an access token."""
+    assert client.post("/api/auth/register", json={"email": email, "password": password}).status_code == 201
+    response = client.post("/api/auth/login", data={"username": email, "password": password})
+    assert response.status_code == 200
+    return response.json()["access_token"]
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

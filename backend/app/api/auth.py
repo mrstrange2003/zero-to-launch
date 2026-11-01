@@ -17,7 +17,7 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.token import MessageResponse, Token, TokenPayload
-from app.schemas.user import UserCreate, UserResponse
+from app.schemas.user import PasswordChange, UserCreate, UserResponse, UserUpdate
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -144,3 +144,36 @@ def logout(response: Response) -> MessageResponse:
 @router.get("/me", response_model=UserResponse)
 def read_me(current_user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(current_user)
+
+
+@router.put("/me", response_model=UserResponse)
+def update_me(user_in: UserUpdate, current_user: CurrentUser, db: DbSession) -> UserResponse:
+    """Update `full_name` and/or `email`. Omitted fields are left unchanged."""
+    email_taken = HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email is already registered")
+    changes = user_in.model_dump(exclude_unset=True)
+
+    new_email = changes.get("email")
+    if new_email is not None and new_email != current_user.email:
+        if db.scalar(select(User.id).where(User.email == new_email)) is not None:
+            raise email_taken
+
+    for field, value in changes.items():
+        setattr(current_user, field, value)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise email_taken
+    db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
+
+
+@router.post("/change-password", response_model=MessageResponse)
+def change_password(body: PasswordChange, current_user: CurrentUser, db: DbSession) -> MessageResponse:
+    # 400 rather than 401: the session is valid, and the frontend treats 401 as "refresh the token".
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    current_user.hashed_password = hash_password(body.new_password)
+    db.commit()
+    return MessageResponse(message="Password updated")

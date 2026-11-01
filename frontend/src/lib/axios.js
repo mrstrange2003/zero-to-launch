@@ -1,6 +1,7 @@
 import axios from 'axios'
 
 export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+export const WS_URL = `${API_URL.replace(/^http/, 'ws')}/api/ws`
 
 // The access token lives only in module memory. The refresh token is an HttpOnly cookie
 // that JavaScript can never read; the browser attaches it to /api/auth/* requests.
@@ -10,6 +11,10 @@ let refreshPromise = null
 
 export function setAccessToken(token) {
   accessToken = token
+}
+
+export function getAccessToken() {
+  return accessToken
 }
 
 export function setAuthHandlers(next) {

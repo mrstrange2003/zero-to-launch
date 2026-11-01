@@ -15,6 +15,9 @@ Always use FastAPI, SQLAlchemy, and PyJWT for backend. Use Vite, React, Tailwind
 - Use FastAPI `lifespan` handlers, not `@app.on_event`.
 - Schema changes go through Alembic (`alembic revision --autogenerate`); never call `Base.metadata.create_all` in app code. New models must be imported in `app/models/__init__.py`.
 - Access tokens (15 min) are returned in JSON; refresh tokens (7 days) live only in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie scoped to `/api/auth`.
+- Guard privileged routes with `Depends(require_role(Role.ADMIN))` (or the `AdminUser` annotation) from `app/api/deps.py`; never check `user.role` ad hoc. Update schemas use `extra="forbid"` so clients cannot set `role`/`is_active`.
+- Return 401 only for missing/invalid/expired credentials (the frontend refreshes on 401). A wrong password inside an authenticated request is a 400.
+- WebSocket messages are Pydantic models (`app/schemas/ws.py`). Clients authenticate with a first `{"type": "auth", "token": ...}` message; never put tokens in WebSocket URLs (they end up in access logs).
 
 ## Frontend specifics
 - Keep the access token in memory (module variable + React state); never persist JWTs in `localStorage`, `sessionStorage`, or JS-readable cookies.
@@ -23,3 +26,4 @@ Always use FastAPI, SQLAlchemy, and PyJWT for backend. Use Vite, React, Tailwind
 - Every new UI must support dark mode: pair light styles with `dark:` variants (class strategy via `@custom-variant dark` in `index.css`). Read the theme with `useTheme()`; never touch the `dark` class directly.
 - Use `toast` from `sonner` for transient feedback (API errors, success confirmations). Keep inline messages for field-level validation only.
 - New authenticated pages go inside the `AppLayout` route in `App.jsx` and add a link in `Sidebar.jsx`'s `NAV_ITEMS`.
+- Realtime features use `useWebSocket()` from `src/lib/useWebSocket.js`; don't open raw `WebSocket`s in components.
