@@ -1,28 +1,36 @@
-import { ArrowLeft, Download, Plus, Trash2 } from 'lucide-react'
+import { Download, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Alert, Button, Input, Modal } from '../components/ui'
-import { useAuth } from '../context/AuthContext'
 
 const VARIANTS = ['primary', 'secondary', 'danger', 'outline']
 const SIZES = ['sm', 'md', 'lg']
 
 function Section({ title, description, children }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <h2 className="text-lg font-semibold">{title}</h2>
-      {description && <p className="mt-1 text-sm text-slate-500">{description}</p>}
+      {description && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{description}</p>}
       <div className="mt-5">{children}</div>
     </section>
   )
 }
 
 function Label({ children }) {
-  return <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">{children}</p>
+  return (
+    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+      {children}
+    </p>
+  )
+}
+
+function fakeRequest(shouldSucceed) {
+  return new Promise((resolve, reject) =>
+    setTimeout(() => (shouldSucceed ? resolve() : reject(new Error('Network error'))), 1200),
+  )
 }
 
 export default function Preview() {
-  const { isAuthenticated } = useAuth()
   const [infoOpen, setInfoOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -34,25 +42,19 @@ export default function Preview() {
     setTimeout(() => {
       setDeleting(false)
       setConfirmOpen(false)
+      toast.success('Project deleted')
     }, 1200)
   }
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-4 sm:px-6">
-          <h1 className="font-semibold">UI Components</h1>
-          <Link
-            to={isAuthenticated ? '/dashboard' : '/login'}
-            className="flex items-center gap-1.5 text-sm text-slate-600 hover:text-slate-900"
-          >
-            <ArrowLeft className="size-4" aria-hidden="true" />
-            Back to {isAuthenticated ? 'dashboard' : 'login'}
-          </Link>
-        </div>
-      </header>
+    <>
+      <h1 className="text-2xl font-semibold tracking-tight">UI Components</h1>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Every reusable component in <code className="font-mono text-xs">src/components/ui</code>, in all
+        variants. Toggle the theme to check dark mode.
+      </p>
 
-      <main className="mx-auto max-w-5xl space-y-8 px-4 py-10 sm:px-6">
+      <div className="mt-8 space-y-8">
         <Section
           title="Button"
           description="Import from components/ui. Supports variant, size, icon, loading, fullWidth, and all native button props."
@@ -161,7 +163,49 @@ export default function Preview() {
             </Button>
           </div>
         </Section>
-      </main>
+
+        <Section
+          title="Toast"
+          description="Global notifications via sonner. Import { toast } from 'sonner' anywhere; the Toaster follows the app theme."
+        >
+          <div className="flex flex-wrap gap-3">
+            <Button variant="outline" onClick={() => toast.success('Changes saved')}>
+              Success
+            </Button>
+            <Button variant="outline" onClick={() => toast.error('Something went wrong')}>
+              Error
+            </Button>
+            <Button variant="outline" onClick={() => toast.warning('Your trial ends in 3 days')}>
+              Warning
+            </Button>
+            <Button variant="outline" onClick={() => toast.info('A new version is available')}>
+              Info
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                toast('File moved to trash', {
+                  action: { label: 'Undo', onClick: () => toast.success('Restored') },
+                })
+              }
+            >
+              With action
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                toast.promise(fakeRequest(Math.random() > 0.3), {
+                  loading: 'Uploading…',
+                  success: 'Upload complete',
+                  error: 'Upload failed',
+                })
+              }
+            >
+              Promise
+            </Button>
+          </div>
+        </Section>
+      </div>
 
       <Modal
         open={infoOpen}
@@ -192,6 +236,6 @@ export default function Preview() {
         This action cannot be undone. All data associated with this project will be permanently
         removed.
       </Modal>
-    </div>
+    </>
   )
 }

@@ -1,9 +1,18 @@
 import { AlertCircle, AlertTriangle, CheckCircle2, X } from 'lucide-react'
 
 const VARIANTS = {
-  success: { box: 'border-emerald-200 bg-emerald-50 text-emerald-800', Icon: CheckCircle2 },
-  error: { box: 'border-red-200 bg-red-50 text-red-800', Icon: AlertCircle },
-  warning: { box: 'border-amber-200 bg-amber-50 text-amber-800', Icon: AlertTriangle },
+  success: {
+    box: 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300',
+    Icon: CheckCircle2,
+  },
+  error: {
+    box: 'border-red-200 bg-red-50 text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
+    Icon: AlertCircle,
+  },
+  warning: {
+    box: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300',
+    Icon: AlertTriangle,
+  },
 }
 
 export default function Alert({ variant = 'error', title, onDismiss, className = '', children }) {

@@ -57,7 +57,7 @@ export default function Modal({ open, onClose, title, size = 'md', footer, child
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+        className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm dark:bg-black/60"
         onClick={onClose}
         aria-hidden="true"
       />
@@ -66,24 +66,24 @@ export default function Modal({ open, onClose, title, size = 'md', footer, child
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative w-full ${SIZES[size]} rounded-2xl bg-white shadow-xl`}
+        className={`relative w-full ${SIZES[size]} rounded-2xl bg-white shadow-xl dark:bg-slate-900 dark:ring-1 dark:ring-slate-800`}
       >
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-          <h2 id={titleId} className="text-lg font-semibold text-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+          <h2 id={titleId} className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             {title}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="-m-1.5 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            className="-m-1.5 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             <X className="size-5" aria-hidden="true" />
           </button>
         </div>
-        <div className="px-6 py-5 text-sm text-slate-600">{children}</div>
+        <div className="px-6 py-5 text-sm text-slate-600 dark:text-slate-300">{children}</div>
         {footer && (
-          <div className="flex justify-end gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 px-6 py-4">
+          <div className="flex justify-end gap-3 rounded-b-2xl border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-slate-950/50">
             {footer}
           </div>
         )}

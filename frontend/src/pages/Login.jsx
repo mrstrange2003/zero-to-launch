@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import AuthLayout from '../components/AuthLayout'
-import { Alert, Button, Input } from '../components/ui'
+import { Button, Input } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
 import { getErrorMessage } from '../lib/apiError'
 import { validateEmail } from '../lib/validation'
@@ -15,7 +16,6 @@ export default function Login() {
   const [email, setEmail] = useState(location.state?.email ?? '')
   const [password, setPassword] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
-  const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
   if (isAuthenticated) {
@@ -24,7 +24,6 @@ export default function Login() {
 
   async function handleSubmit(event) {
     event.preventDefault()
-    setError(null)
 
     const errors = {
       email: validateEmail(email),
@@ -38,11 +37,12 @@ export default function Login() {
       await login(email.trim().toLowerCase(), password)
       navigate(redirectTo, { replace: true })
     } catch (err) {
-      setError(
+      const message =
         err.response?.status === 401
           ? 'Incorrect email or password.'
-          : getErrorMessage(err, 'Unable to sign in. Please try again.'),
-      )
+          : getErrorMessage(err, 'Unable to sign in. Please try again.')
+      // A fixed id replaces the previous toast instead of stacking duplicates on repeated submits.
+      toast.error(message, { id: 'login-error' })
       setLoading(false)
     }
   }
@@ -54,18 +54,11 @@ export default function Login() {
       footer={
         <>
           Don&apos;t have an account?{' '}
-          <Link to="/register" className="font-medium text-brand-600 hover:text-brand-700">
-            Create one
-          </Link>
+          <Link to="/register">Create one</Link>
         </>
       }
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
-        {location.state?.registered && !error && (
-          <Alert variant="success">Account created. Please sign in.</Alert>
-        )}
-        {error && <Alert>{error}</Alert>}
-
         <Input
           id="email"
           label="Email"

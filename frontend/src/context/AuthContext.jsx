@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { toast } from 'sonner'
 import api, { refreshAccessToken, setAccessToken, setAuthHandlers } from '../lib/axios'
 
 const AuthContext = createContext(null)
@@ -18,7 +19,10 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     setAuthHandlers({
       onTokenRefreshed: (data) => setToken(data.access_token),
-      onSessionExpired: clearSession,
+      onSessionExpired: () => {
+        clearSession()
+        toast.warning('Your session has expired. Please sign in again.', { id: 'session-expired' })
+      },
     })
     return () => setAuthHandlers({ onTokenRefreshed: null, onSessionExpired: null })
   }, [clearSession])

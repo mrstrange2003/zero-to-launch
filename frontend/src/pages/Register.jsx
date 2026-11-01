@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import AuthLayout from '../components/AuthLayout'
-import { Alert, Button, Input } from '../components/ui'
+import { Button, Input } from '../components/ui'
 import { useAuth } from '../context/AuthContext'
 import { getErrorMessage } from '../lib/apiError'
 import { PASSWORD_MIN_LENGTH, validateEmail, validateNewPassword } from '../lib/validation'
@@ -14,7 +15,6 @@ export default function Register() {
 
   const [form, setForm] = useState(INITIAL_FORM)
   const [fieldErrors, setFieldErrors] = useState({})
-  const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
 
   if (isAuthenticated) {
@@ -37,7 +37,6 @@ export default function Register() {
 
   async function handleSubmit(event) {
     event.preventDefault()
-    setError(null)
     if (!validate()) return
 
     const email = form.email.trim().toLowerCase()
@@ -46,18 +45,18 @@ export default function Register() {
       await register({ email, password: form.password, fullName: form.fullName.trim() })
     } catch (err) {
       if (err.response?.status === 409) {
-        setError(
-          <>
-            An account with this email already exists.{' '}
-            <Link to="/login" state={{ email }} className="font-medium underline">
-              Sign in instead
-            </Link>
-            .
-          </>,
-        )
+        toast.error('An account with this email already exists.', {
+          id: 'register-error',
+          action: {
+            label: 'Sign in',
+            onClick: () => navigate('/login', { state: { email } }),
+          },
+        })
         setFieldErrors((prev) => ({ ...prev, email: 'This email is already registered.' }))
       } else {
-        setError(getErrorMessage(err, 'Unable to create your account. Please try again.'))
+        toast.error(getErrorMessage(err, 'Unable to create your account. Please try again.'), {
+          id: 'register-error',
+        })
       }
       setLoading(false)
       return
@@ -67,7 +66,8 @@ export default function Register() {
       await login(email, form.password)
       navigate('/dashboard', { replace: true })
     } catch {
-      navigate('/login', { replace: true, state: { registered: true, email } })
+      toast.success('Account created. Please sign in.')
+      navigate('/login', { replace: true, state: { email } })
     }
   }
 
@@ -78,15 +78,11 @@ export default function Register() {
       footer={
         <>
           Already have an account?{' '}
-          <Link to="/login" className="font-medium text-brand-600 hover:text-brand-700">
-            Sign in
-          </Link>
+          <Link to="/login">Sign in</Link>
         </>
       }
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
-        {error && <Alert>{error}</Alert>}
-
         <Input
           id="fullName"
           label="Full name (optional)"

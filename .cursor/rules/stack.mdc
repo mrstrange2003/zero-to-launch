@@ -20,3 +20,6 @@ Always use FastAPI, SQLAlchemy, and PyJWT for backend. Use Vite, React, Tailwind
 - Keep the access token in memory (module variable + React state); never persist JWTs in `localStorage`, `sessionStorage`, or JS-readable cookies.
 - Use the shared Axios instance from `src/lib/axios.js` (`withCredentials: true`). Its interceptor attaches the token, silently refreshes on 401, and retries once.
 - Pass `{ skipAuthRefresh: true }` for requests where a 401 is an expected answer (login, register, refresh, logout).
+- Every new UI must support dark mode: pair light styles with `dark:` variants (class strategy via `@custom-variant dark` in `index.css`). Read the theme with `useTheme()`; never touch the `dark` class directly.
+- Use `toast` from `sonner` for transient feedback (API errors, success confirmations). Keep inline messages for field-level validation only.
+- New authenticated pages go inside the `AppLayout` route in `App.jsx` and add a link in `Sidebar.jsx`'s `NAV_ITEMS`.

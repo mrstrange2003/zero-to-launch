@@ -6,7 +6,7 @@ A production-minded full-stack starter with authentication already wired end to 
 | -------- | --------------------------------------------------------------------- |
 | Backend  | FastAPI, SQLAlchemy 2.0, Pydantic v2, PyJWT, bcrypt                   |
 | Database | SQLite by default, PostgreSQL by changing one env var                 |
-| Frontend | Vite, React 19, React Router, Tailwind CSS v4, Axios, lucide-react    |
+| Frontend | Vite, React 19, React Router, Tailwind CSS v4 (dark mode), Axios, sonner, lucide-react |
 | Ops      | Docker Compose (backend + nginx-served frontend + optional Postgres)  |
 
 ---
@@ -184,13 +184,19 @@ flowchart LR
         ├── lib/
         │   ├── axios.js            # API client, in-memory token, silent refresh + retry
         │   ├── apiError.js         # FastAPI error -> readable message
-        │   └── validation.js       # client-side form rules
-        ├── context/AuthContext.jsx # session restore on load, login / register / logout
+        │   ├── validation.js       # client-side form rules
+        │   └── theme.js            # theme storage + <html> class helpers
+        ├── context/
+        │   ├── AuthContext.jsx     # session restore on load, login / register / logout
+        │   └── ThemeContext.jsx    # light / dark / system, persisted in localStorage
         ├── components/
         │   ├── ui/                 # Button, Input, Modal, Alert (+ index.js barrel)
+        │   ├── AppLayout.jsx       # Sidebar + Navbar + <main><Outlet/></main>
+        │   ├── Sidebar.jsx         # fixed column on desktop, slide-over drawer on mobile
+        │   ├── Navbar.jsx          # hamburger, theme toggle, user + logout
+        │   ├── ThemeToggle.jsx     # Sun/Moon menu: Light, Dark, System
         │   ├── ProtectedRoute.jsx  # redirects to /login without a token
-        │   ├── Navbar.jsx
-        │   └── AuthLayout.jsx
+        │   └── AuthLayout.jsx      # centered card for login/register
         └── pages/                  # Login, Register, Dashboard, Preview
 ```
 
@@ -200,8 +206,11 @@ flowchart LR
 | ------------- | --------- | ------------------------------------------- |
 | `/login`      | public    | Sign in                                     |
 | `/register`   | public    | Create account (auto-signs in on success)   |
-| `/dashboard`  | protected | User info + navbar with logout              |
-| `/preview`    | public    | UI component gallery (`/components` aliases here) |
+| `/dashboard`  | protected | User info, inside `AppLayout`               |
+| `/preview`    | public    | UI component gallery, inside `AppLayout` (`/components` aliases here; shows "Sign in" when logged out) |
+
+`AppLayout` is a layout route: put new pages under it in `App.jsx`, wrap protected ones in
+`<ProtectedRoute />`, and add them to `NAV_ITEMS` in `Sidebar.jsx`.
 
 ---
 
@@ -229,6 +238,35 @@ import { Alert, Button, Input, Modal } from '../components/ui'
 
 `Modal` renders in a portal, closes on backdrop click, the × button, or `Escape`, traps focus, and
 restores focus on close. Open `/preview` to see every variant and state.
+
+### Dark mode
+
+- Tailwind v4 uses the **class strategy**: `@custom-variant dark (&:where(.dark, .dark *));` in
+  `src/index.css`. Any `dark:` utility applies when `<html>` has the `dark` class.
+- `ThemeContext` stores `light`, `dark`, or `system` in `localStorage` (`theme` key). It follows the
+  OS setting live when set to `system`.
+- A tiny inline script in `index.html` applies the saved theme **before first paint**, so dark mode
+  doesn't flash white on load.
+
+```jsx
+const { theme, resolvedTheme, setTheme } = useTheme()  // theme: user choice; resolvedTheme: 'light' | 'dark'
+```
+
+### Toasts
+
+`<Toaster />` (sonner) is mounted once in `App.jsx` and follows the resolved theme. Call it from anywhere:
+
+```jsx
+import { toast } from 'sonner'
+
+toast.success('Saved')
+toast.error('Incorrect email or password.', { id: 'login-error' })  // same id replaces instead of stacking
+toast('Moved to trash', { action: { label: 'Undo', onClick: restore } })
+toast.promise(save(), { loading: 'Saving…', success: 'Saved', error: 'Failed' })
+```
+
+Login and register failures, and a session that expires mid-use, are reported as toasts.
+Field-level validation messages stay inline under each input.
 
 ---
 
